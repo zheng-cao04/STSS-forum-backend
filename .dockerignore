@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.git/
+.env
+data/
+uploads/*
+!uploads/.gitkeep
+.server.log
+.server.pid
+.DS_Store
