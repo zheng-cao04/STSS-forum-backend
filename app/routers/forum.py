@@ -62,6 +62,15 @@ def dt(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
+def parse_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def get_board_or_404(session: Session, board_id: int) -> ForumBoard:
     board = session.get(ForumBoard, board_id)
     if not board:
@@ -245,15 +254,22 @@ def build_moderation_from_target(
     )
 
 
-def activity_items(session: Session, course_id: str | None, period: str) -> list[dict]:
+def activity_items(
+    session: Session,
+    course_id: str | None,
+    offering_id: str | None,
+    period: str,
+) -> list[dict]:
     posts = session.exec(select(ForumPost).where(ForumPost.status != PostStatus.deleted)).all()
     replies = session.exec(select(ForumReply).where(ForumReply.status != ReplyStatus.deleted)).all()
     views = session.exec(select(ForumViewLog)).all()
     if course_id:
         posts = [item for item in posts if item.course_id == course_id]
-        course_post_ids = {item.id for item in posts}
-        replies = [item for item in replies if item.post_id in course_post_ids]
         views = [item for item in views if item.course_id == course_id]
+    if offering_id:
+        posts = [item for item in posts if item.offering_id == offering_id]
+    course_post_ids = {item.id for item in posts}
+    replies = [item for item in replies if item.post_id in course_post_ids]
 
     users = sorted(
         {item.author_id for item in posts}
@@ -409,9 +425,13 @@ def get_announcement_list(
     board_id: int | None = None,
     author_id: int | None = None,
     status: NoticeStatus | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    sort_by: str = "created_at",
     sort_order: str = "desc",
     session: Session = Depends(get_session),
 ) -> dict:
+    _ = sort_by
     items = session.exec(select(Announcement)).all()
     if course_id:
         items = [item for item in items if item.course_id == course_id]
@@ -425,6 +445,12 @@ def get_announcement_list(
         items = [item for item in items if item.status == status]
     else:
         items = [item for item in items if item.status != NoticeStatus.deleted]
+    start_dt = parse_date(start_date)
+    end_dt = parse_date(end_date)
+    if start_dt:
+        items = [item for item in items if item.created_at >= start_dt]
+    if end_dt:
+        items = [item for item in items if item.created_at <= end_dt]
     reverse = sort_order != "asc"
     items.sort(key=lambda item: (item.pinned, item.created_at), reverse=reverse)
     paged, pagination = page_slice(items, page, page_size)
@@ -835,6 +861,8 @@ def search_posts(
     course_id: str | None = None,
     offering_id: str | None = None,
     author_id: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
     sort_by: str = "relevance",
     sort_order: str = "desc",
     session: Session = Depends(get_session),
@@ -849,6 +877,12 @@ def search_posts(
         posts = [item for item in posts if item.offering_id == offering_id]
     if author_id:
         posts = [item for item in posts if item.author_id == author_id]
+    start_dt = parse_date(start_date)
+    end_dt = parse_date(end_date)
+    if start_dt:
+        posts = [item for item in posts if item.created_at >= start_dt]
+    if end_dt:
+        posts = [item for item in posts if item.created_at <= end_dt]
     matches = [
         item for item in posts if lowered in item.title.lower() or lowered in item.content.lower()
     ]
@@ -899,6 +933,10 @@ def get_hot_posts(
         items = [item for item in items if item.course_id == course_id]
     if offering_id:
         items = [item for item in items if item.offering_id == offering_id]
+    start, _ = period_bounds(period)
+    start_dt = parse_date(start)
+    if start_dt:
+        items = [item for item in items if item.created_at >= start_dt]
     items.sort(key=lambda item: item.hot_score, reverse=True)
     return ok(
         {
@@ -928,8 +966,7 @@ def get_user_activity(
     offering_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict:
-    _ = offering_id
-    items = activity_items(session, course_id, period)
+    items = activity_items(session, course_id, offering_id, period)
     if user_id:
         items = [item for item in items if item["user_id"] == user_id]
     return ok({"items": items})
@@ -942,8 +979,7 @@ def get_forum_activity(
     offering_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict:
-    _ = offering_id
-    return ok({"data": activity_items(session, course_id, period)})
+    return ok({"data": activity_items(session, course_id, offering_id, period)})
 
 
 @router.post("/forum/activity-batch")
