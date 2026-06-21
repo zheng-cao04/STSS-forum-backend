@@ -66,9 +66,26 @@ def parse_date(value: str | None) -> datetime | None:
     if not value:
         return None
     parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return comparable_dt(parsed)
+
+
+def comparable_dt(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.min
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def resolve_author_id(value: str | None, user: CurrentUser) -> int | None:
+    if value in {None, ""}:
+        return None
+    if value == "me":
+        return user.id
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise fail(400, 50001, "INVALID_PARAMS") from exc
 
 
 def get_board_or_404(session: Session, board_id: int) -> ForumBoard:
@@ -322,6 +339,19 @@ def healthz() -> dict:
     return ok({"status": "ok", "service": "forum"})
 
 
+@router.get("/me")
+def get_me(user: CurrentUser = Depends(get_current_user)) -> dict:
+    frontend_role = "academic_admin" if user.role == "admin" else user.role
+    return ok(
+        {
+            "id": user.id,
+            "name": user.name,
+            "frontend_role": frontend_role,
+            "backend_role": user.role,
+        }
+    )
+
+
 @router.get("/boards")
 def list_boards(
     page: int = 1,
@@ -448,11 +478,11 @@ def get_announcement_list(
     start_dt = parse_date(start_date)
     end_dt = parse_date(end_date)
     if start_dt:
-        items = [item for item in items if item.created_at >= start_dt]
+        items = [item for item in items if comparable_dt(item.created_at) >= start_dt]
     if end_dt:
-        items = [item for item in items if item.created_at <= end_dt]
+        items = [item for item in items if comparable_dt(item.created_at) <= end_dt]
     reverse = sort_order != "asc"
-    items.sort(key=lambda item: (item.pinned, item.created_at), reverse=reverse)
+    items.sort(key=lambda item: (item.pinned, comparable_dt(item.created_at)), reverse=reverse)
     paged, pagination = page_slice(items, page, page_size)
     return ok({"items": [announcement_out(item) for item in paged], "pagination": pagination})
 
@@ -552,14 +582,16 @@ def get_post_list(
     offering_id: str | None = None,
     board_id: int | None = None,
     module: PostModule | None = None,
-    author_id: int | None = None,
+    author_id: str | None = None,
     status: PostStatus | None = None,
     keyword: str | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     items = session.exec(select(ForumPost)).all()
+    resolved_author_id = resolve_author_id(author_id, user)
     if course_id:
         items = [item for item in items if item.course_id == course_id]
     if offering_id:
@@ -568,8 +600,8 @@ def get_post_list(
         items = [item for item in items if item.board_id == board_id]
     if module:
         items = [item for item in items if item.module == module]
-    if author_id:
-        items = [item for item in items if item.author_id == author_id]
+    if resolved_author_id is not None:
+        items = [item for item in items if item.author_id == resolved_author_id]
     if status:
         items = [item for item in items if item.status == status]
     else:
@@ -585,7 +617,7 @@ def get_post_list(
     if sort_by == "hot_score":
         items.sort(key=lambda item: item.hot_score, reverse=reverse)
     else:
-        items.sort(key=lambda item: (item.pinned, item.created_at), reverse=reverse)
+        items.sort(key=lambda item: (item.pinned, comparable_dt(item.created_at)), reverse=reverse)
     paged, pagination = page_slice(items, page, page_size)
     return ok({"items": [post_out(item) for item in paged], "pagination": pagination})
 
@@ -880,9 +912,9 @@ def search_posts(
     start_dt = parse_date(start_date)
     end_dt = parse_date(end_date)
     if start_dt:
-        posts = [item for item in posts if item.created_at >= start_dt]
+        posts = [item for item in posts if comparable_dt(item.created_at) >= start_dt]
     if end_dt:
-        posts = [item for item in posts if item.created_at <= end_dt]
+        posts = [item for item in posts if comparable_dt(item.created_at) <= end_dt]
     matches = [
         item for item in posts if lowered in item.title.lower() or lowered in item.content.lower()
     ]
@@ -890,7 +922,7 @@ def search_posts(
     if sort_by == "hot_score":
         matches.sort(key=lambda item: item.hot_score, reverse=reverse)
     elif sort_by == "created_at":
-        matches.sort(key=lambda item: item.created_at, reverse=reverse)
+        matches.sort(key=lambda item: comparable_dt(item.created_at), reverse=reverse)
     else:
         matches.sort(
             key=lambda item: (
@@ -936,7 +968,7 @@ def get_hot_posts(
     start, _ = period_bounds(period)
     start_dt = parse_date(start)
     if start_dt:
-        items = [item for item in items if item.created_at >= start_dt]
+        items = [item for item in items if comparable_dt(item.created_at) >= start_dt]
     items.sort(key=lambda item: item.hot_score, reverse=True)
     return ok(
         {

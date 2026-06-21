@@ -79,6 +79,44 @@ def test_create_post_reply_search_and_stats(client: TestClient) -> None:
     stats = unwrap(client.get("/api/v1/forum/stats/user_activity", params={"period": "week"}))
     assert stats["items"]
 
+    weekly_hot = unwrap(
+        client.get("/api/v1/forum/stats/hot_posts", params={"period": "week", "limit": 5})
+    )
+    monthly_hot = unwrap(
+        client.get("/api/v1/forum/stats/hot_posts", params={"period": "month", "limit": 5})
+    )
+    assert "items" in weekly_hot
+    assert "items" in monthly_hot
+
+
+def test_current_user_and_my_posts_query(client: TestClient) -> None:
+    me = unwrap(client.get("/api/v1/forum/me", headers={"Authorization": "Bearer token-student"}))
+    assert me["id"] == 7
+    assert me["backend_role"] == "student"
+
+    created = unwrap(
+        client.post(
+            "/api/v1/forum/posts",
+            json={
+                "board_id": 10,
+                "module": "discussion",
+                "title": "我的帖子查询",
+                "content": "用 author_id=me 查询当前用户帖子。",
+            },
+            headers={"Authorization": "Bearer token-student"},
+        )
+    )
+    assert created["author_id"] == 7
+
+    my_posts = unwrap(
+        client.get(
+            "/api/v1/forum/posts",
+            params={"page": 1, "page_size": 10, "author_id": "me"},
+            headers={"Authorization": "Bearer token-student"},
+        )
+    )
+    assert any(item["id"] == created["id"] for item in my_posts["items"])
+
 
 def test_announcements_lifecycle(client: TestClient) -> None:
     created = unwrap(
