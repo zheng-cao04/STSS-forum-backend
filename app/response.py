@@ -5,7 +5,7 @@ from fastapi import HTTPException
 SUCCESS_CODE = 0
 
 
-def ok(data: Any = None, message: str = "OK") -> dict[str, Any]:
+def ok(data: Any = None, message: str = "success") -> dict[str, Any]:
     return {"code": SUCCESS_CODE, "message": message, "data": data}
 
 

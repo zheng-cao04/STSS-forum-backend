@@ -142,6 +142,83 @@ def test_announcements_lifecycle(client: TestClient) -> None:
     assert data["pagination"]["total"] >= 1
 
 
+def test_popup_announcement_filter(client: TestClient) -> None:
+    popup = unwrap(
+        client.post(
+            "/api/v1/forum/announcements",
+            json={"board_id": 10, "title": "弹窗筛选", "content": "进入板块弹出", "popup": True},
+            headers={"X-User-Id": "2", "X-User-Role": "teacher"},
+        )
+    )
+    unwrap(
+        client.post(
+            "/api/v1/forum/announcements",
+            json={"board_id": 10, "title": "普通公告", "content": "不弹窗", "popup": False},
+            headers={"X-User-Id": "2", "X-User-Role": "teacher"},
+        )
+    )
+
+    data = unwrap(
+        client.get(
+            "/api/v1/forum/announcements",
+            params={"board_id": 10, "status": "published", "popup": True},
+        )
+    )
+
+    assert any(item["id"] == popup["id"] for item in data["items"])
+    assert all(item["popup"] is True for item in data["items"])
+
+
+def test_search_posts_respects_board_and_module_filters(client: TestClient) -> None:
+    keyword = "唯一搜索词A1"
+    expected = unwrap(
+        client.post(
+            "/api/v1/forum/posts",
+            json={
+                "board_id": 10,
+                "module": "discussion",
+                "title": f"{keyword} 目标帖",
+                "content": "应命中",
+            },
+            headers={"X-User-Id": "7", "X-User-Role": "student"},
+        )
+    )
+    unwrap(
+        client.post(
+            "/api/v1/forum/posts",
+            json={
+                "board_id": 11,
+                "module": "discussion",
+                "title": f"{keyword} 其他板块",
+                "content": "不应命中",
+            },
+            headers={"X-User-Id": "7", "X-User-Role": "student"},
+        )
+    )
+    unwrap(
+        client.post(
+            "/api/v1/forum/posts",
+            json={
+                "board_id": 10,
+                "module": "homework",
+                "title": f"{keyword} 其他模块",
+                "content": "不应命中",
+            },
+            headers={"X-User-Id": "7", "X-User-Role": "student"},
+        )
+    )
+
+    data = unwrap(
+        client.get(
+            "/api/v1/forum/search/posts",
+            params={"keyword": keyword, "board_id": 10, "module": "discussion"},
+        )
+    )
+
+    assert [item["id"] for item in data["items"]] == [expected["id"]]
+    assert data["items"][0]["module"] == "discussion"
+
+
 def test_board_and_moderation_support(client: TestClient) -> None:
     boards = unwrap(client.get("/api/v1/forum/boards", params={"page": 1, "page_size": 10}))
     assert boards["items"][0]["course_name"]
@@ -200,8 +277,99 @@ def test_board_and_moderation_support(client: TestClient) -> None:
     )
     assert handled["status"] == "hidden"
 
-    moderation_list = unwrap(client.get("/api/v1/forum/moderation", params={"status": "hidden"}))
+    moderation_list = unwrap(
+        client.get(
+            "/api/v1/forum/moderation",
+            params={"status": "hidden"},
+            headers={"X-User-Id": "1", "X-User-Role": "admin"},
+        )
+    )
     assert moderation_list["pagination"]["total"] >= 1
+
+
+def test_approved_report_hides_post_from_student_visibility(client: TestClient) -> None:
+    keyword = "通过举报目标B2"
+    created_post = unwrap(
+        client.post(
+            "/api/v1/forum/posts",
+            json={
+                "board_id": 10,
+                "module": "general",
+                "title": keyword,
+                "content": "被举报后隐藏",
+            },
+            headers={"X-User-Id": "11", "X-User-Role": "student", "X-User-Name": "student11"},
+        )
+    )
+    report = unwrap(
+        client.post(
+            "/api/v1/forum/moderation/reports",
+            json={"target_type": "post", "target_id": created_post["id"], "reason": "hide it"},
+            headers={"X-User-Id": "7", "X-User-Role": "student"},
+        )
+    )
+    unwrap(
+        client.put(
+            f"/api/v1/forum/moderation/{report['id']}/handle",
+            json={"status": "approved", "reason": "report accepted by admin"},
+            headers={"X-User-Id": "1", "X-User-Role": "admin", "X-User-Name": "admin"},
+        )
+    )
+
+    listed = unwrap(
+        client.get(
+            "/api/v1/forum/posts",
+            params={"board_id": 10, "keyword": keyword},
+            headers={"X-User-Id": "7", "X-User-Role": "student"},
+        )
+    )
+    searched = unwrap(
+        client.get(
+            "/api/v1/forum/search/posts",
+            params={"keyword": keyword, "board_id": 10},
+            headers={"X-User-Id": "7", "X-User-Role": "student"},
+        )
+    )
+    detail = client.get(
+        f"/api/v1/forum/posts/{created_post['id']}",
+        headers={"X-User-Id": "7", "X-User-Role": "student"},
+    )
+
+    assert created_post["id"] not in {item["id"] for item in listed["items"]}
+    assert searched["pagination"]["total"] == 0
+    assert detail.status_code == 404
+
+
+def test_student_cannot_list_hidden_posts_by_status(client: TestClient) -> None:
+    created_post = unwrap(
+        client.post(
+            "/api/v1/forum/posts",
+            json={
+                "board_id": 10,
+                "module": "general",
+                "title": "显式状态隐藏测试",
+                "content": "学生不能用 status=hidden 看到",
+            },
+            headers={"X-User-Id": "11", "X-User-Role": "student"},
+        )
+    )
+    unwrap(
+        client.put(
+            f"/api/v1/forum/posts/{created_post['id']}",
+            json={"status": "hidden"},
+            headers={"X-User-Id": "1", "X-User-Role": "admin"},
+        )
+    )
+
+    listed = unwrap(
+        client.get(
+            "/api/v1/forum/posts",
+            params={"status": "hidden"},
+            headers={"X-User-Id": "7", "X-User-Role": "student"},
+        )
+    )
+
+    assert listed["pagination"]["total"] == 0
 
 
 def test_attachment_url_uses_gateway_prefix_and_legacy_mount(client: TestClient) -> None:
@@ -241,3 +409,9 @@ def test_attachment_url_uses_gateway_prefix_and_legacy_mount(client: TestClient)
             headers={"Authorization": "Bearer token-student"},
         )
     )
+
+
+def test_gateway_health_endpoint(client: TestClient) -> None:
+    data = unwrap(client.get("/api/v1/health"))
+    assert data["status"] == "ok"
+    assert data["service"] == "forum"

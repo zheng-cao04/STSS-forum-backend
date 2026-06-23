@@ -16,13 +16,14 @@ settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.frontend_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if settings.enable_cors:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.frontend_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 @app.on_event("startup")
@@ -53,7 +54,12 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
 
 @app.get("/healthz")
 def root_healthz() -> dict:
-    return {"code": 0, "message": "OK", "data": {"status": "ok", "service": "forum"}}
+    return {"code": 0, "message": "success", "data": {"status": "ok", "service": "forum"}}
+
+
+@app.get("/api/v1/health")
+def gateway_health() -> dict:
+    return {"code": 0, "message": "success", "data": {"status": "ok", "service": "forum"}}
 
 
 app.include_router(forum_router)

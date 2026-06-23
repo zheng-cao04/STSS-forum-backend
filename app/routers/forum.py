@@ -106,6 +106,16 @@ def ensure_teacher_or_admin(user: CurrentUser) -> None:
         raise fail(403, 50202, "FORBIDDEN_NOT_TEACHER")
 
 
+def visible_post_statuses(user: CurrentUser) -> set[PostStatus]:
+    if user.is_admin:
+        return {PostStatus.published, PostStatus.hot, PostStatus.pinned, PostStatus.hidden}
+    return {PostStatus.published, PostStatus.hot, PostStatus.pinned}
+
+
+def can_read_post(item: ForumPost | None, user: CurrentUser) -> bool:
+    return bool(item and item.status in visible_post_statuses(user))
+
+
 def announcement_out(item: Announcement) -> dict:
     return {
         "id": item.id,
@@ -467,17 +477,20 @@ def delete_board(
 @router.get("/announcements")
 def get_announcement_list(
     page: int = 1,
-    page_size: int = 10,
+    page_size: int = 20,
     course_id: str | None = None,
     offering_id: str | None = None,
     board_id: int | None = None,
     author_id: int | None = None,
     status: NoticeStatus | None = None,
+    popup: bool | None = None,
+    pinned: bool | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     _ = sort_by
     items = session.exec(select(Announcement)).all()
@@ -489,10 +502,20 @@ def get_announcement_list(
         items = [item for item in items if item.board_id == board_id]
     if author_id:
         items = [item for item in items if item.author_id == author_id]
+    if popup is not None:
+        items = [item for item in items if item.popup == popup]
+    if pinned is not None:
+        items = [item for item in items if item.pinned == pinned]
     if status:
-        items = [item for item in items if item.status == status]
+        if status != NoticeStatus.published and not user.is_teacher_or_admin:
+            items = []
+        else:
+            items = [item for item in items if item.status == status]
     else:
-        items = [item for item in items if item.status != NoticeStatus.deleted]
+        if user.is_teacher_or_admin:
+            items = [item for item in items if item.status != NoticeStatus.deleted]
+        else:
+            items = [item for item in items if item.status == NoticeStatus.published]
     start_dt = parse_date(start_date)
     end_dt = parse_date(end_date)
     if start_dt:
@@ -595,7 +618,7 @@ def toggle_announcement_popup(
 @router.get("/posts")
 def get_post_list(
     page: int = 1,
-    page_size: int = 10,
+    page_size: int = 20,
     course_id: str | None = None,
     offering_id: str | None = None,
     board_id: int | None = None,
@@ -621,9 +644,13 @@ def get_post_list(
     if resolved_author_id is not None:
         items = [item for item in items if item.author_id == resolved_author_id]
     if status:
-        items = [item for item in items if item.status == status]
+        if status not in visible_post_statuses(user):
+            items = []
+        else:
+            items = [item for item in items if item.status == status]
     else:
-        items = [item for item in items if item.status != PostStatus.deleted]
+        readable_statuses = visible_post_statuses(user)
+        items = [item for item in items if item.status in readable_statuses]
     if keyword:
         lowered = keyword.lower()
         items = [
@@ -705,9 +732,10 @@ def list_post_attachments(
     post_id: int,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     post = session.get(ForumPost, post_id)
-    if not post or post.status == PostStatus.deleted:
+    if not can_read_post(post, user):
         raise fail(404, 50101, "POST_NOT_FOUND")
     items = session.exec(
         select(ForumAttachment).where(ForumAttachment.post_id == post_id)
@@ -723,12 +751,16 @@ def get_reply_list(
     page_size: int = 20,
     since_floor: int | None = None,
     session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     post = session.get(ForumPost, post_id)
-    if not post or post.status == PostStatus.deleted:
+    if not can_read_post(post, user):
         raise fail(404, 50101, "POST_NOT_FOUND")
     items = session.exec(select(ForumReply).where(ForumReply.post_id == post_id)).all()
-    items = [item for item in items if item.status != ReplyStatus.deleted]
+    if user.is_admin:
+        items = [item for item in items if item.status != ReplyStatus.deleted]
+    else:
+        items = [item for item in items if item.status == ReplyStatus.published]
     if since_floor is not None:
         items = [item for item in items if item.floor > since_floor]
     items.sort(key=lambda item: item.floor)
@@ -760,7 +792,7 @@ def create_reply(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     post = session.get(ForumPost, post_id)
-    if not post or post.status == PostStatus.deleted:
+    if not can_read_post(post, user):
         raise fail(404, 50101, "POST_NOT_FOUND")
     if payload.parent_reply_id is not None:
         parent = session.get(ForumReply, payload.parent_reply_id)
@@ -794,7 +826,7 @@ def get_post_detail(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     item = session.get(ForumPost, post_id)
-    if not item or item.status == PostStatus.deleted:
+    if not can_read_post(item, user):
         raise fail(404, 50101, "POST_NOT_FOUND")
     board = session.get(ForumBoard, item.board_id)
     item.views_count += 1
@@ -908,24 +940,33 @@ def delete_reply(
 def search_posts(
     keyword: str = Query(min_length=1),
     page: int = 1,
-    page_size: int = 10,
+    page_size: int = 20,
     course_id: str | None = None,
     offering_id: str | None = None,
+    board_id: int | None = None,
+    module: PostModule | None = None,
     author_id: int | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     sort_by: str = "relevance",
     sort_order: str = "desc",
     session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     lowered = keyword.strip().lower()
     if not lowered:
         raise fail(400, 50401, "KEYWORD_REQUIRED")
-    posts = session.exec(select(ForumPost).where(ForumPost.status != PostStatus.deleted)).all()
+    posts = session.exec(select(ForumPost)).all()
+    readable_statuses = visible_post_statuses(user)
+    posts = [item for item in posts if item.status in readable_statuses]
     if course_id:
         posts = [item for item in posts if item.course_id == course_id]
     if offering_id:
         posts = [item for item in posts if item.offering_id == offering_id]
+    if board_id:
+        posts = [item for item in posts if item.board_id == board_id]
+    if module:
+        posts = [item for item in posts if item.module == module]
     if author_id:
         posts = [item for item in posts if item.author_id == author_id]
     start_dt = parse_date(start_date)
@@ -957,11 +998,22 @@ def search_posts(
                 {
                     "id": item.id,
                     "title": item.title,
+                    "content": item.content,
                     "snippet": item.content[:180],
                     "course_id": item.course_id,
+                    "offering_id": item.offering_id,
                     "board_id": item.board_id,
+                    "module": item.module,
+                    "status": item.status,
+                    "pinned": item.pinned,
+                    "views_count": item.views_count,
+                    "replies_count": item.replies_count,
+                    "likes_count": item.likes_count,
                     "author_id": item.author_id,
+                    "author_name": item.author_name,
+                    "author_role": item.author_role,
                     "created_at": dt(item.created_at),
+                    "updated_at": dt(item.updated_at),
                     "hot_score": item.hot_score,
                 }
                 for item in paged
@@ -1059,7 +1111,10 @@ def list_moderation_items(
     target_type: ModerationTargetType | None = None,
     status: ModerationStatus | None = None,
     session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    if not user.is_admin:
+        raise fail(403, 50002, "UNAUTHORIZED")
     items = session.exec(select(ForumModeration)).all()
     if keyword:
         lowered = keyword.lower()
@@ -1127,12 +1182,8 @@ def handle_moderation_item(
             post.status = PostStatus(payload.status.value)
             post.updated_at = now()
             session.add(post)
-        elif (
-            post
-            and payload.status == ModerationStatus.approved
-            and post.status == PostStatus.hidden
-        ):
-            post.status = PostStatus.published
+        elif post and payload.status == ModerationStatus.approved:
+            post.status = PostStatus.published if post.status == PostStatus.hidden else PostStatus.hidden
             post.updated_at = now()
             session.add(post)
     else:
@@ -1141,12 +1192,8 @@ def handle_moderation_item(
             reply.status = ReplyStatus(payload.status.value)
             reply.updated_at = now()
             session.add(reply)
-        elif (
-            reply
-            and payload.status == ModerationStatus.approved
-            and reply.status == ReplyStatus.hidden
-        ):
-            reply.status = ReplyStatus.published
+        elif reply and payload.status == ModerationStatus.approved:
+            reply.status = ReplyStatus.published if reply.status == ReplyStatus.hidden else ReplyStatus.hidden
             reply.updated_at = now()
             session.add(reply)
 

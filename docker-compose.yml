@@ -1,9 +1,9 @@
 services:
-  forum-api:
+  forum_service:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: stss_forum_api
+    container_name: stss-forum
     ports:
       - "5000:8005"
     environment:
@@ -14,6 +14,7 @@ services:
       UPLOAD_DIR: ${UPLOAD_DIR:-uploads}
       PUBLIC_UPLOAD_PREFIX: ${PUBLIC_UPLOAD_PREFIX:-/api/v1/forum/uploads}
       LEGACY_UPLOAD_PREFIX: ${LEGACY_UPLOAD_PREFIX:-/uploads}
+      ENABLE_CORS: ${ENABLE_CORS:-true}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173"]}
       SKIP_EXTERNAL_CHECKS: ${SKIP_EXTERNAL_CHECKS:-true}
       INFO_SERVICE_URL: ${INFO_SERVICE_URL:-http://host.docker.internal:8002}
@@ -29,7 +30,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8005/api/v1/forum/healthz')",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8005/api/v1/health')",
         ]
       interval: 10s
       timeout: 3s

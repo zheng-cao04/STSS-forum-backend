@@ -7,7 +7,7 @@ D 组论坛交流子系统后端，面向 `SSTS-frontend` 中的 `src/api/module
 - FastAPI
 - SQLModel
 - SQLite 默认本地开发；通过 `DATABASE_URL` 可切换 PostgreSQL
-- 统一响应：`{"code": 0, "message": "OK", "data": ...}`
+- 统一响应：`{"code": 0, "message": "success", "data": ...}`
 
 ## 快速启动
 
@@ -42,14 +42,16 @@ docker compose up --build
 健康检查：
 
 ```text
-http://localhost:5000/api/v1/forum/healthz
+http://localhost:5000/api/v1/health
 ```
 
-统一网关接入时，上游服务地址使用：
+统一网关接入时，论坛后端作为独立镜像由 `STSS-deploy` 编排，不需要把代码合并到部署仓库。上游服务地址使用：
 
 ```text
 FORUM_SERVICE_URL=forum_service:8005
 ```
+
+网关负责鉴权、CORS 和路径转发；论坛服务只读取网关注入的 `X-User-Id`、`X-User-Role`、`X-User-Name` 请求头。服务自身默认不设置 CORS 响应头；本地绕过网关直连调试时可设置 `ENABLE_CORS=true`。
 
 附件新上传后默认返回 `/api/v1/forum/uploads/<file>`，后端仍保留旧 `/uploads/<file>` 静态挂载用于本地和历史数据兼容。
 
@@ -92,6 +94,7 @@ docker compose down -v
 - `GET /api/v1/forum/stats/user_activity`
 - `GET /api/v1/forum/internal/forum/activity`
 - `POST /api/v1/forum/forum/activity-batch`
+- `GET /api/v1/health`
 - `GET /api/v1/forum/healthz`
 - `GET /api/v1/forum/boards`
 - `POST /api/v1/forum/boards`

@@ -19,4 +19,7 @@ RUN mkdir -p /app/data /app/uploads
 
 EXPOSE 8005
 
+HEALTHCHECK --interval=15s --timeout=3s --retries=5 --start-period=10s \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8005/api/v1/health')"
+
 CMD ["/bin/sh", "-c", "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${FORUM_PORT:-8005}"]
