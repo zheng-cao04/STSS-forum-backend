@@ -190,12 +190,30 @@ def reply_out(item: ForumReply) -> dict:
     }
 
 
-def attachment_out(item: ForumAttachment) -> dict:
+def stored_attachment_name(file_url: str, settings: Settings) -> str | None:
+    for prefix in (settings.public_upload_prefix, settings.legacy_upload_prefix):
+        normalized_prefix = prefix.rstrip("/") + "/"
+        if file_url.startswith(normalized_prefix):
+            return file_url.removeprefix(normalized_prefix)
+    return None
+
+
+def public_attachment_url(stored_name: str, settings: Settings) -> str:
+    return f"{settings.public_upload_prefix.rstrip('/')}/{stored_name}"
+
+
+def attachment_out(item: ForumAttachment, settings: Settings | None = None) -> dict:
+    file_url = item.file_url
+    if settings:
+        stored_name = stored_attachment_name(item.file_url, settings)
+        if stored_name:
+            file_url = public_attachment_url(stored_name, settings)
+
     return {
         "id": item.id,
         "post_id": item.post_id,
         "file_name": item.file_name,
-        "file_url": item.file_url,
+        "file_url": file_url,
         "file_size": item.file_size,
         "mime_type": item.mime_type,
         "uploader_id": item.uploader_id,
@@ -671,7 +689,7 @@ def upload_attachment(
     attachment = ForumAttachment(
         post_id=post_id,
         file_name=safe_name,
-        file_url=f"{settings.public_upload_prefix.rstrip('/')}/{stored_name}",
+        file_url=public_attachment_url(stored_name, settings),
         file_size=stored_path.stat().st_size,
         mime_type=file.content_type or "application/octet-stream",
         uploader_id=user.id,
@@ -679,13 +697,14 @@ def upload_attachment(
     session.add(attachment)
     session.commit()
     session.refresh(attachment)
-    return ok(attachment_out(attachment))
+    return ok(attachment_out(attachment, settings))
 
 
 @router.get("/posts/{post_id}/attachments")
 def list_post_attachments(
     post_id: int,
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     post = session.get(ForumPost, post_id)
     if not post or post.status == PostStatus.deleted:
@@ -693,7 +712,7 @@ def list_post_attachments(
     items = session.exec(
         select(ForumAttachment).where(ForumAttachment.post_id == post_id)
     ).all()
-    return ok({"items": [attachment_out(item) for item in items]})
+    return ok({"items": [attachment_out(item, settings) for item in items]})
 
 
 @router.get("/posts/{post_id}/replies")
@@ -852,9 +871,9 @@ def delete_attachment(
         raise fail(404, 50001, "INVALID_PARAMS")
     if not user.is_admin and attachment.uploader_id != user.id:
         raise fail(403, 50002, "UNAUTHORIZED")
-    prefix = settings.public_upload_prefix.rstrip("/") + "/"
-    if attachment.file_url.startswith(prefix):
-        local_path = Path(settings.upload_dir) / attachment.file_url.removeprefix(prefix)
+    stored_name = stored_attachment_name(attachment.file_url, settings)
+    if stored_name:
+        local_path = Path(settings.upload_dir) / stored_name
         if local_path.exists():
             local_path.unlink()
     session.delete(attachment)

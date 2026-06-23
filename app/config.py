@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     env: Literal["development", "test", "production"] = "development"
     database_url: str = "sqlite:///./data/forum.db"
     upload_dir: str = "uploads"
-    public_upload_prefix: str = "/uploads"
+    public_upload_prefix: str = "/api/v1/forum/uploads"
+    legacy_upload_prefix: str = "/uploads"
     frontend_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     skip_external_checks: bool = True
     info_service_url: str = "http://localhost:8002"

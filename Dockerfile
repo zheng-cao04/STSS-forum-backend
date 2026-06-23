@@ -17,6 +17,6 @@ COPY README.md ./
 
 RUN mkdir -p /app/data /app/uploads
 
-EXPOSE 5000
+EXPOSE 8005
 
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["/bin/sh", "-c", "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${FORUM_PORT:-8005}"]

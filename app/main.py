@@ -58,3 +58,9 @@ def root_healthz() -> dict:
 
 app.include_router(forum_router)
 app.mount(settings.public_upload_prefix, StaticFiles(directory=settings.upload_dir), name="uploads")
+if settings.legacy_upload_prefix != settings.public_upload_prefix:
+    app.mount(
+        settings.legacy_upload_prefix,
+        StaticFiles(directory=settings.upload_dir),
+        name="legacy_uploads",
+    )

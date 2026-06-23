@@ -202,3 +202,42 @@ def test_board_and_moderation_support(client: TestClient) -> None:
 
     moderation_list = unwrap(client.get("/api/v1/forum/moderation", params={"status": "hidden"}))
     assert moderation_list["pagination"]["total"] >= 1
+
+
+def test_attachment_url_uses_gateway_prefix_and_legacy_mount(client: TestClient) -> None:
+    created = unwrap(
+        client.post(
+            "/api/v1/forum/posts",
+            json={
+                "board_id": 10,
+                "module": "discussion",
+                "title": "附件路径",
+                "content": "验证附件 URL 可通过网关前缀访问。",
+            },
+            headers={"Authorization": "Bearer token-student"},
+        )
+    )
+
+    uploaded = unwrap(
+        client.post(
+            f"/api/v1/forum/posts/{created['id']}/attachments",
+            files={"file": ("note.txt", b"hello forum", "text/plain")},
+            headers={"Authorization": "Bearer token-student"},
+        )
+    )
+
+    assert uploaded["file_url"].startswith("/api/v1/forum/uploads/")
+    assert client.get(uploaded["file_url"]).content == b"hello forum"
+
+    legacy_url = uploaded["file_url"].replace("/api/v1/forum/uploads/", "/uploads/", 1)
+    assert client.get(legacy_url).content == b"hello forum"
+
+    listed = unwrap(client.get(f"/api/v1/forum/posts/{created['id']}/attachments"))
+    assert listed["items"][0]["file_url"].startswith("/api/v1/forum/uploads/")
+
+    unwrap(
+        client.delete(
+            f"/api/v1/forum/attachments/{uploaded['id']}",
+            headers={"Authorization": "Bearer token-student"},
+        )
+    )

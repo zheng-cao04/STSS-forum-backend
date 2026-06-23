@@ -5,13 +5,15 @@ services:
       dockerfile: Dockerfile
     container_name: stss_forum_api
     ports:
-      - "5000:5000"
+      - "5000:8005"
     environment:
       APP_NAME: ${APP_NAME:-STSS Forum Backend}
       ENV: ${ENV:-development}
+      FORUM_PORT: ${FORUM_PORT:-8005}
       DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/forum.db}
       UPLOAD_DIR: ${UPLOAD_DIR:-uploads}
-      PUBLIC_UPLOAD_PREFIX: ${PUBLIC_UPLOAD_PREFIX:-/uploads}
+      PUBLIC_UPLOAD_PREFIX: ${PUBLIC_UPLOAD_PREFIX:-/api/v1/forum/uploads}
+      LEGACY_UPLOAD_PREFIX: ${LEGACY_UPLOAD_PREFIX:-/uploads}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173"]}
       SKIP_EXTERNAL_CHECKS: ${SKIP_EXTERNAL_CHECKS:-true}
       INFO_SERVICE_URL: ${INFO_SERVICE_URL:-http://host.docker.internal:8002}
@@ -27,7 +29,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/forum/healthz')",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8005/api/v1/forum/healthz')",
         ]
       interval: 10s
       timeout: 3s

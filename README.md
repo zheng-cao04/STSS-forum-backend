@@ -35,7 +35,8 @@ docker compose up --build
 服务端口：
 
 ```text
-http://localhost:5000
+宿主机：http://localhost:5000
+容器内：http://forum_service:8005
 ```
 
 健康检查：
@@ -43,6 +44,14 @@ http://localhost:5000
 ```text
 http://localhost:5000/api/v1/forum/healthz
 ```
+
+统一网关接入时，上游服务地址使用：
+
+```text
+FORUM_SERVICE_URL=forum_service:8005
+```
+
+附件新上传后默认返回 `/api/v1/forum/uploads/<file>`，后端仍保留旧 `/uploads/<file>` 静态挂载用于本地和历史数据兼容。
 
 Compose 会创建两个 named volumes：
 
